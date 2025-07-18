@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                   http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+  <changeSet id="1" author="dev">
+    <!--
+      Key fix: splitStatements="false" tells Liquibase to send the entire
+      content of this tag as a single statement, ignoring internal semicolons.
+    -->
+    <sql stripComments="false" splitStatements="false">
+      CREATE OR REPLACE FUNCTION notify_trigger() RETURNS TRIGGER AS $$
+      DECLARE
+      channel TEXT;
+      payload JSONB;
+      old_data JSONB := NULL;
+      new_data JSONB := NULL;
+      BEGIN
+      -- The notification channel is determined by the first trigger argument.
+      channel := TG_ARGV[0];
+
+      -- Determine which data (OLD or NEW) is available and convert it to JSONB
+      IF (TG_OP = 'UPDATE' OR TG_OP = 'DELETE') THEN
+      old_data := to_jsonb(OLD);
+      END IF;
+
+      IF (TG_OP = 'INSERT' OR TG_OP = 'UPDATE') THEN
+      new_data := to_jsonb(NEW);
+      END IF;
+
+      -- Construct the JSON payload
+      payload := jsonb_build_object(
+      'timestamp', NOW(),
+      'operation', TG_OP,
+      'schema', TG_TABLE_SCHEMA,
+      'table', TG_TABLE_NAME,
+      'old_data', old_data,
+      'new_data', new_data
+      );
+
+      -- Notify the channel with the JSON payload.
+      PERFORM pg_notify(channel, payload::TEXT);
+
+      -- Return NULL since this is an AFTER trigger and the result is ignored.
+      RETURN NULL;
+      END;
+      $$ LANGUAGE plpgsql;
+    </sql>
+    <rollback>
+      DROP FUNCTION IF EXISTS notify_trigger();
+    </rollback>
+  </changeSet>
+
+</databaseChangeLog>
